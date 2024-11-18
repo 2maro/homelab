@@ -31,7 +31,7 @@
         path: "{{ modules_file }}"
         line: "{{ item }}"
         create: yes
-      with_items:
+      loop:
         - vfio
         - vfio_iommu_type1
         - vfio_pci
@@ -45,7 +45,7 @@
       ansible.builtin.modprobe:
         name: "{{ item }}"
         state: present
-      with_items:
+      loop:
         - vfio
         - vfio_iommu_type1
         - vfio_pci
