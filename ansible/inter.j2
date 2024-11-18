@@ -1,0 +1,19 @@
+auto lo
+iface lo inet loopback
+
+# {{ network_bridges[0].comments }}
+auto {{ network_bridges[0].name }}
+iface {{ network_bridges[0].name }} inet static
+    address {{ network_bridges[0].address }}
+    netmask {{ network_bridges[0].netmask }}
+    gateway {{ network_bridges[0].gateway }}
+    bridge_ports {{ network_bridges[0].interface }}
+    bridge_stp off
+    bridge_fd 0
+    mtu 1500
+
+# Physical interface
+auto {{ network_bridges[0].interface }}
+iface {{ network_bridges[0].interface }} inet manual
+    mtu 1500
+

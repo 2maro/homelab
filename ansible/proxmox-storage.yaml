@@ -1,0 +1,93 @@
+- name: Configure Proxmox Storage
+  hosts: proxmox
+  become: true
+  vars:
+    confirm_wipe: 'yes'
+    zfs_pool_name: mypool
+    disks:
+      - '/dev/sdb'
+      - '/dev/sdc'
+      - '/dev/sdd'
+    # Modified the datasets structure to use extra_zfs_properties instead of properties
+    datasets:
+      - name: vms
+        extra_zfs_properties:
+          quota: '1T'
+          compression: 'lz4'
+      - name: containers
+        extra_zfs_properties:
+          quota: '600G'
+          compression: 'lz4'
+      - name: backups
+        extra_zfs_properties:
+          quota: '800G'
+          compression: 'lz4'
+          dedup: 'on'
+      - name: nfs_shares
+        extra_zfs_properties:
+          quota: '600G'
+          compression: 'lz4'
+  tasks:
+    - name: Install ZFS utilities
+      ansible.builtin.apt:
+        name: zfsutils-linux
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Unmount disks if mounted
+      ansible.builtin.command:
+        cmd: "umount {{ item }}"
+      register: umount_result
+      loop: "{{ disks }}"
+      ignore_errors: true
+      failed_when: false
+      changed_when: umount_result.rc == 0
+
+    - name: Wipe filesystem signatures from disks (CAUTION)
+      ansible.builtin.command:
+        cmd: "wipefs -a {{ item }}"
+      loop: "{{ disks }}"
+      when: confirm_wipe == 'yes'
+      register: wipe_result
+      failed_when:
+        - wipe_result.rc != 0
+        - "'Device or resource busy' not in wipe_result.stderr"
+
+    - name: Clear partition tables
+      ansible.builtin.command:
+        cmd: "sgdisk --zap-all {{ item }}"
+      loop: "{{ disks }}"
+      when: confirm_wipe == 'yes'
+
+    - name: Check if ZFS pool exists
+      ansible.builtin.command:
+        cmd: "zpool list {{ zfs_pool_name }}"
+      register: zpool_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create mirrored ZFS pool if it does not exist
+      ansible.builtin.command:
+        cmd: >-
+          zpool create {{ zfs_pool_name }}
+          mirror {{ disks | join(' ') }}
+          -o ashift=12
+          -o autoexpand=on
+          -o autotrim=on
+          -f
+      when: zpool_check.rc != 0
+      register: pool_create
+      failed_when:
+        - pool_create.rc != 0
+        - "'already exists' not in pool_create.stderr"
+
+    # Modified the ZFS datasets task to use the correct parameter name
+    - name: Create ZFS datasets
+      community.general.zfs:
+        name: "{{ zfs_pool_name }}/{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.extra_zfs_properties }}"
+      loop: "{{ datasets }}"
+      loop_control:
+        label: "{{ item.name }}"

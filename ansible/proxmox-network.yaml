@@ -1,0 +1,43 @@
+- name: Configure Proxmox Networking 
+  hosts: proxmox
+  gather_facts: false
+  vars:
+    network_bridges:
+      - name: vmbr0
+        interface: enp5s0
+        address: 192.168.1.3
+        netmask: 255.255.255.0
+        gateway: 192.168.1.1
+        comments: "Management Network and VM Network"
+
+  tasks:
+    - name: Check if /etc/network/interfaces exists
+      ansible.builtin.stat:
+        path: /etc/network/interfaces
+      register: interfaces_file
+
+    - name: Backup current network interfaces file if it exists
+      ansible.builtin.copy:
+        src: /etc/network/interfaces
+        dest: /etc/network/interfaces.backup
+        remote_src: yes
+        mode: '0644'
+      when: interfaces_file.stat.exists
+
+    - name: Ensure /etc/network directory exists
+      ansible.builtin.file:
+        path: /etc/network
+        state: directory
+        mode: '0755'
+
+    - name: Generate new network interfaces configuration
+      ansible.builtin.template:
+        src: inter.j2
+        dest: /etc/network/interfaces
+        mode: '0644'
+      notify: Restart networking
+
+  handlers:
+    - name: Restart networking
+      ansible.builtin.command: systemctl restart networking
+
