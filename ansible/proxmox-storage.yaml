@@ -2,7 +2,7 @@
   hosts: proxmox
   become: true
   vars:
-    confirm_wipe: 'yes'
+    confirm_wipe: 'no'
     zfs_pool_name: mypool
     disks:
       - '/dev/sdb'
