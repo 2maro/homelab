@@ -1,36 +1,47 @@
+---
 - name: Configure Proxmox Storage
   hosts: proxmox
   become: true
   vars:
     confirm_wipe: 'no'
-    zfs_pool_name: mypool
+    zfs_pool_name: shared_pool
     disks:
       - '/dev/sdb'
       - '/dev/sdc'
-      - '/dev/sdd'
-    # Modified the datasets structure to use extra_zfs_properties instead of properties
     datasets:
-      - name: vms
+      - name: "vm_storage"
         extra_zfs_properties:
-          quota: '1T'
+          quota: '1536G'
           compression: 'lz4'
-      - name: containers
+          atime: 'off'
+          recordsize: '128K'
+          sync: 'disabled'
+      - name: "vm_storage/isolated"
         extra_zfs_properties:
-          quota: '600G'
+          quota: '200G'
           compression: 'lz4'
-      - name: backups
+          atime: 'off'
+          recordsize: '128K'
+          sync: 'disabled'
+      - name: "nfs_share"
         extra_zfs_properties:
-          quota: '800G'
+          quota: '300G'
           compression: 'lz4'
-          dedup: 'on'
-      - name: nfs_shares
+          atime: 'off'
+          recordsize: '1M'
+      - name: "samba_share"
         extra_zfs_properties:
-          quota: '600G'
+          quota: '300G'
           compression: 'lz4'
+          atime: 'off'
+          recordsize: '1M'
   tasks:
-    - name: Install ZFS utilities
+    - name: Install required packages
       ansible.builtin.apt:
-        name: zfsutils-linux
+        name:
+          - zfsutils-linux
+          - samba
+          - nfs-kernel-server
         state: present
         update_cache: yes
       when: ansible_os_family == "Debian"
@@ -75,6 +86,7 @@
           -o ashift=12
           -o autoexpand=on
           -o autotrim=on
+          -o feature@zstd_compress=enabled
           -f
       when: zpool_check.rc != 0
       register: pool_create
@@ -82,7 +94,6 @@
         - pool_create.rc != 0
         - "'already exists' not in pool_create.stderr"
 
-    # Modified the ZFS datasets task to use the correct parameter name
     - name: Create ZFS datasets
       community.general.zfs:
         name: "{{ zfs_pool_name }}/{{ item.name }}"
@@ -91,3 +102,99 @@
       loop: "{{ datasets }}"
       loop_control:
         label: "{{ item.name }}"
+
+    # Modified NFS configuration section
+    - name: Backup existing exports file
+      ansible.builtin.copy:
+        src: /etc/exports
+        dest: /etc/exports.backup
+        remote_src: yes
+        force: yes
+      ignore_errors: yes
+
+    - name: Clear existing exports file
+      ansible.builtin.copy:
+        content: ""
+        dest: /etc/exports
+        force: yes
+
+    - name: Add NFS export
+      ansible.builtin.lineinfile:
+        path: /etc/exports
+        line: "/{{ zfs_pool_name }}/nfs_share *(rw,sync,no_subtree_check,no_root_squash)"
+        create: yes
+
+    - name: Configure Samba share
+      ansible.builtin.blockinfile:
+        path: /etc/samba/smb.conf
+        marker: "# {mark} ANSIBLE MANAGED BLOCK FOR {{ zfs_pool_name }}"
+        block: |
+          [shared_storage]
+            path = /{{ zfs_pool_name }}/samba_share
+            browseable = yes
+            read only = no
+            force user = nobody
+            force group = nogroup
+            create mask = 0777
+            directory mask = 0777
+            valid users = @sambashare
+        create: yes
+
+    - name: Create sambashare group
+      ansible.builtin.group:
+        name: sambashare
+        state: present
+
+    - name: Force remove existing Proxmox storage if present (ignore errors)
+      ansible.builtin.shell:
+        cmd: |
+          pvesm remove {{ zfs_pool_name }}-vm || true
+      changed_when: false
+
+    - name: Wait for storage removal
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Configure Proxmox VM Storage
+      ansible.builtin.shell:
+        cmd: |
+          pvesm add zfspool {{ zfs_pool_name }}-vm \
+          --pool "{{ zfs_pool_name }}/vm_storage" \
+          --sparse 1 \
+          --content images,rootdir || echo "Storage already exists"
+      register: storage_result
+      changed_when: storage_result.rc == 0
+      failed_when: false
+
+    - name: Ensure NFS directories exist with proper permissions
+      ansible.builtin.file:
+        path: "/{{ zfs_pool_name }}/nfs_share"
+        state: directory
+        mode: '0777'
+        owner: nobody
+        group: nogroup
+
+    - name: Safely reload NFS exports
+      ansible.builtin.shell: |
+        exportfs -ua
+        sleep 2
+        exportfs -ra
+      register: reload_result
+      failed_when: false
+
+    - name: Ensure services are running
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: restarted
+        enabled: yes
+      loop:
+        - smbd
+        - nmbd
+        - nfs-kernel-server
+
+  handlers:
+    - name: reload nfs exports
+      ansible.builtin.shell: |
+        exportfs -ua
+        sleep 2
+        exportfs -ra
