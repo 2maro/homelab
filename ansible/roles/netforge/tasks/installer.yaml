@@ -1,0 +1,15 @@
+
+- name: Install Required packages
+  hosts: netforge
+  become: true
+  tasks:
+    - name: Install kea DHCP, BIND, and Step CLI
+      dnf:
+        name:
+          - kea
+          - bind
+          - bind-utils
+          - step-cli
+      state: present
+
+

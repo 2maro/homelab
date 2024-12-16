@@ -1,0 +1,6 @@
+---
+  - name: setup netforge for dhcp dns tls 
+    hosts: netforge
+    become: true
+    roles:
+      - netforge
