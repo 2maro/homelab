@@ -9,15 +9,15 @@ packer {
 
 variable "proxmox_url" {
   type    = string
-  default = "http://your-proxmox-url:8006/api2/json"
+  default = "http://192.168.1.3:8006/api2/json"
 }
 variable "username" {
   type    = string
-  default = "root@pam"
+  default = "root@pam!packer"
 }
 variable "token" {
   type    = string
-  default = "your_token"
+  default = "2c-4b96-81d9-d1fe2e0e36e8"
 }
 
 variable "insecure_skip_tls_verify" {
@@ -34,7 +34,7 @@ variable "node" {
 }
 variable "disk_size" {
   type    = string
-  default = "10G"
+  default = "20G"
 }
 variable "localiso" {
   type    = string
@@ -48,11 +48,12 @@ source "proxmox-iso" "rocky9" {
   token                    = var.token
   insecure_skip_tls_verify = var.insecure_skip_tls_verify
   node                     = var.node
-  ssh_password             = var.ssh_password
-  ssh_username             = "root"
-  ssh_timeout              = "10m"
   vm_id                    = 1000
   vm_name                  = "rocky9-base"
+  template_name   = "rocky-server-template"
+  template_description   = "rocky-9.5, generated on ${timestamp()}"
+  ssh_username      = "root"
+  ssh_password      = "password"
   numa                     = true
   cores                    = 2
   memory                   = 2048
@@ -60,13 +61,12 @@ source "proxmox-iso" "rocky9" {
   qemu_agent               = true
   machine                  = "q35"
   cpu_type                 = "host"
-
   http_directory    = "http"
   http_port_min     = 8613
   http_port_max     = 8613
   http_bind_address = "0.0.0.0"
-  boot_wait         = "10s"
-
+  communicator = "none"
+  task_timeout      = "10m"  
   scsi_controller = "virtio-scsi-pci"
   boot_iso {
     type     = "scsi"
@@ -92,21 +92,14 @@ source "proxmox-iso" "rocky9" {
     " inst.stage2=cdrom",
     " inst.text",
     " ip=dhcp",
+    " <enter>",
     " <enter>"
   ]
 
 }
 
 build {
+  name = "rocky-server-template"
   sources = ["source.proxmox-iso.rocky9"]
-
-  provisioner "shell" {
-    inline = [
-      "dnf update -y",
-      "dnf install -y qemu-guest-agent",
-      "systemctl enable qemu-guest-agent",
-      "systemctl start qemu-guest-agent"
-    ]
-  }
 }
 
