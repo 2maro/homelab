@@ -50,10 +50,10 @@ source "proxmox-iso" "rocky9" {
   node                     = var.node
   vm_id                    = 1000
   vm_name                  = "rocky9-base"
-  template_name   = "rocky-server-template"
-  template_description   = "rocky-9.5, generated on ${timestamp()}"
-  ssh_username      = "root"
-  ssh_password      = "password"
+  template_name            = "rocky-server-template"
+  template_description     = "rocky-9.5, generated on ${timestamp()}"
+  ssh_username             = "root"
+  ssh_password             = "password"
   numa                     = true
   cores                    = 2
   memory                   = 2048
@@ -61,13 +61,13 @@ source "proxmox-iso" "rocky9" {
   qemu_agent               = true
   machine                  = "q35"
   cpu_type                 = "host"
-  http_directory    = "http"
-  http_port_min     = 8613
-  http_port_max     = 8613
-  http_bind_address = "0.0.0.0"
-  communicator = "none"
-  task_timeout      = "10m"  
-  scsi_controller = "virtio-scsi-pci"
+  http_directory           = "http"
+  http_port_min            = 8613
+  http_port_max            = 8613
+  http_bind_address        = "0.0.0.0"
+  communicator             = "none"
+  task_timeout             = "10m"
+  scsi_controller          = "virtio-scsi-pci"
   boot_iso {
     type     = "scsi"
     iso_file = var.localiso
@@ -99,7 +99,7 @@ source "proxmox-iso" "rocky9" {
 }
 
 build {
-  name = "rocky-server-template"
+  name    = "rocky-server-template"
   sources = ["source.proxmox-iso.rocky9"]
 }
 
