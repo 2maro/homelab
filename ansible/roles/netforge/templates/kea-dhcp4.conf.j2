@@ -1,0 +1,33 @@
+
+{
+  "Dhcp4": {
+    "interfaces-config": {
+      "interfaces": [ "eth0" ]
+    },
+    "control-interface": {
+      "http-host": "0.0.0.0",
+      "http-port": 8000
+    },
+    "lease-database": {
+      "type": "memfile"
+    },
+    "ddns-update": true,
+    "ddns-servers": [
+      {
+        "hostname": "dns.example.com",
+        "port": 53,
+        "key-name": "dhcp1-ns1",
+        "key-secret": "YOUR_BASE64_ENCODED_TSIG_KEY",
+        "key-algorithm": "hmac-sha256"
+      }
+    ],
+    "subnet4": [
+      {
+        "subnet": "192.168.1.0/24",
+        "pools": [
+          { "pool": "192.168.1.50 - 192.168.1.200" }
+        ]
+      }
+    ]
+  }
+}

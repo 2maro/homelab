@@ -1,7 +1,8 @@
 ---
 - name: Proxmox Initial Setup
   hosts: proxmox
-  become: true
+  become: yes
+  gather_facts: yes
+
   roles:
     - proxmox
-

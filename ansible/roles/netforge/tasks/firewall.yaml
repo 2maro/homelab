@@ -1,0 +1,39 @@
+- name: Configure Firewall for NetForge Services
+  hosts: netforge
+  become: true
+  tasks:
+    - name: Ensure firewalld is installed and enabled
+      dnf:
+        name: firewalld
+        state: present
+        update_cache: yes
+
+    - name: Start and enable firewalld
+      systemd:
+        name: firewalld
+        enabled: true
+        state: started
+
+    - name: Open DNS service in the firewall
+      firewalld:
+        service: dns
+        permanent: true
+        state: enabled
+
+    - name: Open DHCP service in the firewall
+      firewalld:
+        service: dhcp
+        permanent: true
+        state: enabled
+
+    - name: Open StepCA port in the firewall
+      firewalld:
+        port: 8443/tcp
+        permanent: true
+        state: enabled
+
+    - name: Reload firewall to apply changes
+      firewalld:
+        immediate: true
+        state: reloaded
+

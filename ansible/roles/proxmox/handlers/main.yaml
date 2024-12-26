@@ -1,0 +1,28 @@
+# roles/proxmox/handlers/main.yml
+---
+# Handler to restart networking
+- name: Restart networking
+  ansible.builtin.command: systemctl restart networking
+
+# Handler to update GRUB configuration
+- name: update-grub
+  ansible.builtin.command: update-grub
+
+# Handler to reload NFS exports
+- name: reload-nfs
+  ansible.builtin.shell: |
+    exportfs -ua
+    exportfs -ra
+
+# Handler to restart Samba services
+- name: restart-samba
+  ansible.builtin.service:
+    name: smbd
+    state: restarted
+
+# Handler to restart NFS server
+- name: restart-nfs
+  ansible.builtin.service:
+    name: nfs-kernel-server
+    state: restarted
+

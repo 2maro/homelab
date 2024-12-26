@@ -3,6 +3,11 @@
 - import_tasks: repo.yaml
 - import_tasks: network.yaml
 - import_tasks: iommu.yaml
-- import_tasks: storage.yaml
 - import_tasks: virtio.yaml
+- import_tasks: gpu-pass.yaml
+- import_tasks: storage.yaml
+- import_tasks: nfs_samba.yaml 
+
+
+
 

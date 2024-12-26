@@ -1,0 +1,75 @@
+---
+- name: Install NFS and Samba packages
+  ansible.builtin.apt:
+    name:
+      - nfs-kernel-server
+      - samba
+    state: present
+    update_cache: yes
+
+- name: Ensure Samba share directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: '0777'
+    owner: nobody
+    group: nogroup
+  loop: "{{ samba_shares }}"
+
+- name: Configure Samba global settings
+  ansible.builtin.blockinfile:
+    path: /etc/samba/smb.conf
+    create: yes
+    marker: "# {mark} ANSIBLE MANAGED BLOCK FOR GLOBAL SETTINGS"
+    insertbefore: BOF
+    block: |
+      [global]
+      workgroup = WORKGROUP
+      server string = Samba Server
+      security = user
+      map to guest = bad user
+      dns proxy = no
+
+- name: Configure Samba shares
+  ansible.builtin.blockinfile:
+    path: /etc/samba/smb.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK FOR {{ item.name }}"
+    block: |
+      [{{ item.name }}]
+        path = {{ item.path }}
+        browseable = yes
+        read only = no
+        force user = nobody
+        force group = nogroup
+        create mask = 0777
+        directory mask = 0777
+        guest ok = yes
+  loop: "{{ samba_shares }}"
+
+- name: Configure NFS exports
+  ansible.builtin.lineinfile:
+    path: /etc/exports
+    line: "{{ item.path }} {{ item.clients }}"
+    create: yes
+  loop: "{{ nfs_exports }}"
+
+- name: Ensure NFS services are running
+  ansible.builtin.service:
+    name: nfs-kernel-server
+    state: started
+    enabled: yes
+
+- name: Reload NFS exports
+  ansible.builtin.shell: |
+    exportfs -ua
+    exportfs -ra
+  when: nfs_exports is defined and nfs_exports | length > 0
+
+- name: Restart Samba services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: restarted
+    enabled: yes
+  loop:
+    - smbd
+    - nmbd

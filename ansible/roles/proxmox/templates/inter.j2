@@ -1,7 +1,9 @@
+ 
+# Loopback interface
 auto lo
 iface lo inet loopback
 
-# {{ network_bridges[0].comments }}
+# Management Network (vmbr0)
 auto {{ network_bridges[0].name }}
 iface {{ network_bridges[0].name }} inet static
     address {{ network_bridges[0].address }}
@@ -10,10 +12,15 @@ iface {{ network_bridges[0].name }} inet static
     bridge_ports {{ network_bridges[0].interface }}
     bridge_stp off
     bridge_fd 0
-    mtu 1500
+    # {{ network_bridges[0].comments }}
 
-# Physical interface
-auto {{ network_bridges[0].interface }}
-iface {{ network_bridges[0].interface }} inet manual
-    mtu 1500
+# Private Network (vmbr1)
+auto {{ network_bridges[1].name }}
+iface {{ network_bridges[1].name }} inet static
+    address {{ network_bridges[1].address }}
+    netmask {{ network_bridges[1].netmask }}
+    bridge_ports {{ network_bridges[1].interface }}
+    bridge_stp off
+    bridge_fd 0
+    # {{ network_bridges[1].comments }}
 

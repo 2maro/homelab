@@ -1,107 +1,69 @@
 ---
-- name: Complete Proxmox Configuration
-  hosts: proxmox
-  become: yes
-  tasks:
-    - name: Disable PVE Enterprise repository
-      ansible.builtin.replace:
-        path: /etc/apt/sources.list.d/pve-enterprise.list
-        regexp: '^deb https://enterprise.proxmox.com/debian/pve'
-        replace: '# deb https://enterprise.proxmox.com/debian/pve'
-        backup: yes
+- name: Gather distribution codename (e.g., bullseye, bookworm)
+  ansible.builtin.command: "awk -F'=' '/^VERSION_CODENAME=/{ print $NF }' /etc/os-release"
+  register: distro_codename
+  changed_when: false
 
-    - name: Enable PVE No-Subscription repository
-      ansible.builtin.lineinfile:
-        path: /etc/apt/sources.list.d/pve-no-subscription.list
-        line: "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription"
-        create: yes
-        owner: root
-        group: root
-        mode: '0644'
+- name: Debug distribution information
+  ansible.builtin.debug:
+    msg: "Distribution codename: {{ distro_codename.stdout }}"
 
-    - name: Configure Debian repository sources
-      ansible.builtin.blockinfile:
-        path: /etc/apt/sources.list
-        block: |
-          deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
-          deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
-        create: yes
-        backup: yes
+- name: Update Debian repository sources
+  ansible.builtin.blockinfile:
+    path: /etc/apt/sources.list
+    create: yes
+    backup: yes
+    block: |
+      deb http://deb.debian.org/debian {{ distro_codename.stdout }} main contrib non-free non-free-firmware
+      deb http://deb.debian.org/debian {{ distro_codename.stdout }}-updates main contrib non-free non-free-firmware
+      deb http://security.debian.org/debian-security {{ distro_codename.stdout }}-security main contrib non-free-firmware
+  when: fix_debian_sources | default(true)
 
-    - name: Add disabled PVE test repository
-      ansible.builtin.lineinfile:
-        path: /etc/apt/sources.list.d/pve-test.list
-        line: "# deb http://download.proxmox.com/debian/pve bookworm pvetest"
-        create: yes
-        owner: root
-        group: root
-        mode: '0644'
+- name: Disable 'pve-enterprise' repository
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/pve-enterprise.list
+    line: "# deb https://enterprise.proxmox.com/debian/pve {{ distro_codename.stdout }} pve-enterprise"
+    create: yes
+  when: disable_enterprise_repo | default(true)
 
-    - name: Add disabled cep repo
-      ansible.builtin.lineinfile:
-        path: /etc/apt/sources.list.d/ceph.list
-        line: "# deb #https://enterprise.proxmox.com/debian/ceph-quincy bookworm enterprise"
-        create: yes
-        owner: root
-        group: root
-        mode: '0644'
+- name: Enable 'pve-no-subscription' repository
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/pve-no-subscription.list
+    line: "deb http://download.proxmox.com/debian/pve {{ distro_codename.stdout }} pve-no-subscription"
+    create: yes
+  when: enable_no_subscription_repo | default(true)
 
-    - name: Clean apt cache
-      ansible.builtin.apt:
-        autoclean: yes
+- name: Add 'pve-test' repository (disabled)
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/pve-test.list
+    line: "# deb http://download.proxmox.com/debian/pve {{ distro_codename.stdout }} pvetest"
+    create: yes
+  when: add_test_repo | default(true)
 
-    - name: update apt cache after repository changes
-      ansible.builtin.apt:
-        update_cache: yes
+- name: Ensure apt hook script to remove subscription nag is installed
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/no-nag-script
+    content: |
+      DPkg::Post-Invoke {
+        "dpkg -V proxmox-widget-toolkit | grep -q '/proxmoxlib\\.js$'; if [ $? -eq 1 ]; then echo 'Removing subscription nag from UI...'; sed -i '/data\\.status.*{/{s/!//;s/active/NoMoreNagging/}' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; fi";
+      };
+    mode: '0644'
+  when: disable_subscription_nag | default(true)
 
-    - name: Restart pveproxy service
-      ansible.builtin.systemd:
-        name: pveproxy
-        state: restarted
+- name: Reinstall proxmox-widget-toolkit to trigger the hook
+  ansible.builtin.apt:
+    name: proxmox-widget-toolkit
+    state: present
+    force: yes
+  when: disable_subscription_nag | default(true)
 
-    - name: Upgrade all packages
-      ansible.builtin.apt:
-       upgrade: dist
-       force_apt_get: yes
+- name: Update package cache and upgrade all packages
+  ansible.builtin.apt:
+    upgrade: dist
+    force_apt_get: yes
+  when: do_update | default(true)
 
-    - name: Install/Reinstall proxmox-widget-toolkit
-      ansible.builtin.apt:
-       name: proxmox-widget-toolkit
-       state: present
-       force: yes
-       update_cache: no
-
-    - name: Remove subscription nag from JavaScript file
-      ansible.builtin.replace:
-       path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-       regexp: "if\\s*\\(res === null.*\\{.*\\}"
-       replace: "if (false) {"
-       backup: yes
-
-    - name: Disable firmware warning
-      ansible.builtin.replace:
-       path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-       regexp: "if\\s*\\(res === null.*\\{[\\s\\S]*?\\}\\s*else\\s*if\\s*\\(!premium\\)\\s*\\{.*?\\}"
-       replace: "if (false) {"
-       backup: yes
-
-    - name: Check if high availability is active
-      ansible.builtin.service_facts:
-      register: services_state
-
-    - name: Disable high availability services for single node
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: stopped
-        enabled: no
-      loop:
-        - pve-ha-lrm
-        - pve-ha-crm
-        - corosync
-      when: services_state.ansible_facts.services['pve-ha-lrm.service'] is defined and
-            services_state.ansible_facts.services['pve-ha-lrm.service'].state == 'running'
-
-    - name: Reboot system if required
-      ansible.builtin.reboot:
-      when: ansible_facts.uptime_seconds <= 3600
+- name: Reboot the system if requested
+  ansible.builtin.reboot:
+    msg: "Rebooting the system as requested."
+  when: do_reboot | default(false)

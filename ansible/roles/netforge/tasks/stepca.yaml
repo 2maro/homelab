@@ -1,27 +1,29 @@
-
-- name: Configure StepCA
+- name: Install StepCA
   hosts: netforge
   become: true
   tasks:
-    - name: Deploy StepCA configuration
-      copy:
-        dest: /etc/step-ca/config/ca.json
-        content: |
-          {
-            "address": "0.0.0.0:443",
-            "dnsNames": ["netforge.local"],
-            "provisioners": [
-              {
-                "name": "netforge",
-                "type": "JWK",
-                "key": "{{ stepca_provisioner_key }}"
-              }
-            ]
-          }
+    - name: Download StepCA binary
+      get_url:
+        url: "https://github.com/smallstep/certificates/releases/latest/download/step-ca_linux_amd64.tar.gz"
+        dest: /tmp/step-ca.tar.gz
+
+    - name: Extract StepCA binary
+      unarchive:
+        src: /tmp/step-ca.tar.gz
+        dest: /usr/local/bin/
+        remote_src: true
+
+    - name: Initialize StepCA
+      command: step-ca init --name "NetForge CA" --dns "netforge.local" --address ":8443"
+
+    - name: Configure StepCA systemd service
+      template:
+        src: templates/step-ca.service.j2
+        dest: /etc/systemd/system/step-ca.service
 
     - name: Start and enable StepCA
       systemd:
         name: step-ca
-        state: started
         enabled: true
+        state: started
 

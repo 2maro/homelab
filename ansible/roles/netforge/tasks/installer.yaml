@@ -3,13 +3,14 @@
   hosts: netforge
   become: true
   tasks:
-    - name: Install kea DHCP, BIND, and Step CLI
+    - name: Install kea-DHCP, BIND, and Step CLI
       dnf:
         name:
-          - kea
-          - bind
+          - bind 
           - bind-utils
-          - step-cli
+          - kea-ctrl-agent
+          - kea-dhcp4
+          - wget 
       state: present
 
 

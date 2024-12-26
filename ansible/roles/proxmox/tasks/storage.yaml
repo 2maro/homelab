@@ -1,200 +1,150 @@
+
+# storage.yaml
 ---
-- name: Configure Proxmox Storage
-  hosts: proxmox
-  become: true
-  vars:
-    confirm_wipe: 'no'
-    zfs_pool_name: shared_pool
-    disks:
-      - '/dev/sdb'
-      - '/dev/sdc'
-    datasets:
-      - name: "vm_storage"
-        extra_zfs_properties:
-          quota: '1536G'
-          compression: 'lz4'
-          atime: 'off'
-          recordsize: '128K'
-          sync: 'disabled'
-      - name: "vm_storage/isolated"
-        extra_zfs_properties:
-          quota: '200G'
-          compression: 'lz4'
-          atime: 'off'
-          recordsize: '128K'
-          sync: 'disabled'
-      - name: "nfs_share"
-        extra_zfs_properties:
-          quota: '300G'
-          compression: 'lz4'
-          atime: 'off'
-          recordsize: '1M'
-      - name: "samba_share"
-        extra_zfs_properties:
-          quota: '300G'
-          compression: 'lz4'
-          atime: 'off'
-          recordsize: '1M'
-  tasks:
-    - name: Install required packages
-      ansible.builtin.apt:
-        name:
-          - zfsutils-linux
-          - samba
-          - nfs-kernel-server
-        state: present
-        update_cache: yes
-      when: ansible_os_family == "Debian"
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - zfsutils-linux
+      - samba
+      - nfs-kernel-server
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
 
-    - name: Unmount disks if mounted
-      ansible.builtin.command:
-        cmd: "umount {{ item }}"
-      register: umount_result
-      loop: "{{ disks }}"
-      ignore_errors: true
-      failed_when: false
-      changed_when: umount_result.rc == 0
+- name: Get mount information
+  ansible.builtin.shell: |
+    mount | grep "{{ zfs_pool_name }}" || true
+  register: mount_info
+  changed_when: false
+  ignore_errors: true
 
-    - name: Wipe filesystem signatures from disks (CAUTION)
-      ansible.builtin.command:
-        cmd: "wipefs -a {{ item }}"
-      loop: "{{ disks }}"
-      when: confirm_wipe == 'yes'
-      register: wipe_result
-      failed_when:
-        - wipe_result.rc != 0
-        - "'Device or resource busy' not in wipe_result.stderr"
+- name: Remove ZFS filesystems if mounted
+  ansible.builtin.shell: |
+    zfs umount -f {{ zfs_pool_name }} || true
+    zfs umount -f {{ zfs_pool_name }}/* || true
+  when: mount_info.stdout != ""
+  ignore_errors: true
 
-    - name: Clear partition tables
-      ansible.builtin.command:
-        cmd: "sgdisk --zap-all {{ item }}"
-      loop: "{{ disks }}"
-      when: confirm_wipe == 'yes'
+- name: Force cleanup existing directory
+  ansible.builtin.shell: |
+    rm -rf "/{{ zfs_pool_name }}"
+  args:
+    removes: "/{{ zfs_pool_name }}"
+  ignore_errors: true
 
-    - name: Check if ZFS pool exists
-      ansible.builtin.command:
-        cmd: "zpool list {{ zfs_pool_name }}"
-      register: zpool_check
-      failed_when: false
-      changed_when: false
+- name: Check for existing ZFS pool
+  ansible.builtin.command:
+    cmd: zpool list -H -o name {{ zfs_pool_name }}
+  register: pool_check
+  changed_when: false
+  failed_when: false
 
-    - name: Create mirrored ZFS pool if it does not exist
-      ansible.builtin.command:
-        cmd: >-
-          zpool create {{ zfs_pool_name }}
-          mirror {{ disks | join(' ') }}
-          -o ashift=12
-          -o autoexpand=on
-          -o autotrim=on
-          -o feature@zstd_compress=enabled
-          -f
-      when: zpool_check.rc != 0
-      register: pool_create
-      failed_when:
-        - pool_create.rc != 0
-        - "'already exists' not in pool_create.stderr"
+- name: Export existing pool if found
+  ansible.builtin.command:
+    cmd: zpool export -f {{ zfs_pool_name }}
+  when: pool_check.rc == 0
+  ignore_errors: true
 
-    - name: Create ZFS datasets
-      community.general.zfs:
-        name: "{{ zfs_pool_name }}/{{ item.name }}"
-        state: present
-        extra_zfs_properties: "{{ item.extra_zfs_properties }}"
-      loop: "{{ datasets }}"
-      loop_control:
-        label: "{{ item.name }}"
+- name: Wipe filesystem signatures from disks
+  ansible.builtin.command:
+    cmd: "wipefs -a {{ item }}"
+  loop: "{{ disks }}"
+  when: confirm_wipe == 'yes'
+  ignore_errors: true
 
-    # Modified NFS configuration section
-    - name: Backup existing exports file
-      ansible.builtin.copy:
-        src: /etc/exports
-        dest: /etc/exports.backup
-        remote_src: yes
-        force: yes
-      ignore_errors: yes
+- name: Clear partition tables
+  ansible.builtin.command:
+    cmd: "sgdisk --zap-all {{ item }}"
+  loop: "{{ disks }}"
+  when: confirm_wipe == 'yes'
+  ignore_errors: true
 
-    - name: Clear existing exports file
-      ansible.builtin.copy:
-        content: ""
-        dest: /etc/exports
-        force: yes
+- name: Create ZFS pool
+  ansible.builtin.command:
+    cmd: "zpool create -f {{ zfs_pool_name }} mirror {{ disks | join(' ') }} -o ashift=12 -o autoexpand=on -o autotrim=on -o feature@zstd_compress=enabled"
+  when: pool_check.rc != 0
+  register: pool_create
 
-    - name: Add NFS export
-      ansible.builtin.lineinfile:
-        path: /etc/exports
-        line: "/{{ zfs_pool_name }}/nfs_share *(rw,sync,no_subtree_check,no_root_squash)"
-        create: yes
+- name: Verify pool exists
+  ansible.builtin.command:
+    cmd: "zpool list {{ zfs_pool_name }}"
+  register: pool_exists
+  changed_when: false
+  failed_when: false
 
-    - name: Configure Samba share
-      ansible.builtin.blockinfile:
-        path: /etc/samba/smb.conf
-        marker: "# {mark} ANSIBLE MANAGED BLOCK FOR {{ zfs_pool_name }}"
-        block: |
-          [shared_storage]
-            path = /{{ zfs_pool_name }}/samba_share
-            browseable = yes
-            read only = no
-            force user = nobody
-            force group = nogroup
-            create mask = 0777
-            directory mask = 0777
-            valid users = @sambashare
-        create: yes
+- name: Debug pool status
+  ansible.builtin.debug:
+    msg: "Pool status: {{ pool_exists }}"
 
-    - name: Create sambashare group
-      ansible.builtin.group:
-        name: sambashare
-        state: present
+- name: Create datasets if pool exists
+  ansible.builtin.shell: |
+    if zpool list {{ zfs_pool_name }} > /dev/null 2>&1; then
+      zfs create \
+        -o quota={{ item.extra_zfs_properties.quota }} \
+        -o compression={{ item.extra_zfs_properties.compression }} \
+        -o recordsize={{ item.extra_zfs_properties.recordsize }} \
+        -o sync={{ item.extra_zfs_properties.sync }} \
+        {{ zfs_pool_name }}/{{ item.name }} || \
+      zfs set \
+        quota={{ item.extra_zfs_properties.quota }} \
+        compression={{ item.extra_zfs_properties.compression }} \
+        recordsize={{ item.extra_zfs_properties.recordsize }} \
+        sync={{ item.extra_zfs_properties.sync }} \
+        {{ zfs_pool_name }}/{{ item.name }}
+    fi
+  loop: "{{ datasets }}"
+  register: dataset_creation
+  failed_when: false
 
-    - name: Force remove existing Proxmox storage if present (ignore errors)
-      ansible.builtin.shell:
-        cmd: |
-          pvesm remove {{ zfs_pool_name }}-vm || true
-      changed_when: false
+- name: Ensure NFS export directories exist with correct permissions
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: '0777'
+    owner: nobody
+    group: nogroup
+  loop: "{{ nfs_exports }}"
+  when: pool_exists.rc == 0
 
-    - name: Wait for storage removal
-      ansible.builtin.pause:
-        seconds: 5
+- name: Backup existing exports file
+  ansible.builtin.copy:
+    src: /etc/exports
+    dest: /etc/exports.backup
+    remote_src: yes
+    force: yes
+  ignore_errors: yes
 
-    - name: Configure Proxmox VM Storage
-      ansible.builtin.shell:
-        cmd: |
-          pvesm add zfspool {{ zfs_pool_name }}-vm \
-          --pool "{{ zfs_pool_name }}/vm_storage" \
-          --sparse 1 \
-          --content images,rootdir || echo "Storage already exists"
-      register: storage_result
-      changed_when: storage_result.rc == 0
-      failed_when: false
+- name: Configure NFS exports
+  ansible.builtin.lineinfile:
+    path: /etc/exports
+    line: "{{ item.path }} {{ item.clients }}"
+    create: yes
+  loop: "{{ nfs_exports }}"
+  when: pool_exists.rc == 0
 
-    - name: Ensure NFS directories exist with proper permissions
-      ansible.builtin.file:
-        path: "/{{ zfs_pool_name }}/nfs_share"
-        state: directory
-        mode: '0777'
-        owner: nobody
-        group: nogroup
+- name: Verify NFS export paths exist
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ nfs_exports }}"
+  register: nfs_paths
+  when: pool_exists.rc == 0
 
-    - name: Safely reload NFS exports
-      ansible.builtin.shell: |
-        exportfs -ua
-        sleep 2
-        exportfs -ra
-      register: reload_result
-      failed_when: false
+- name: Safely reload NFS exports
+  ansible.builtin.shell: |
+    exportfs -ua
+    sleep 2
+    exportfs -ra
+  when: pool_exists.rc == 0
+  register: reload_result
+  failed_when: false
 
-    - name: Ensure services are running
-      ansible.builtin.service:
-        name: "{{ item }}"
-        state: restarted
-        enabled: yes
-      loop:
-        - smbd
-        - nmbd
-        - nfs-kernel-server
-
-  handlers:
-    - name: reload nfs exports
-      ansible.builtin.shell: |
-        exportfs -ua
-        sleep 2
-        exportfs -ra
+- name: Ensure services are running
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: restarted
+    enabled: yes
+  loop:
+    - smbd
+    - nmbd
+    - nfs-kernel-server
+  when: pool_exists.rc == 0

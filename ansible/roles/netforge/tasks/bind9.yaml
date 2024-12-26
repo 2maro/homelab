@@ -1,0 +1,28 @@
+---
+# roles/netforge/tasks/bind9.yaml
+
+- name: "Create directory for dynamic zones (if not exists)"
+  file:
+    path: /var/named/dynamic
+    state: directory
+    owner: named
+    group: named
+    mode: '0750'
+  become: true
+
+- name: "Deploy named.conf"
+  template:
+    src: named.conf.j2
+    dest: /etc/named.conf
+    owner: root
+    group: named
+    mode: '0644'
+  become: true
+
+- name: "Ensure Bind9 (named) is running and enabled"
+  service:
+    name: named
+    state: started
+    enabled: true
+  become: true
+

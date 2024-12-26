@@ -1,0 +1,20 @@
+
+- name: "Deploy Kea DHCP4 configuration file"
+  template:
+    src: kea-dhcp4.conf.j2
+    dest: /etc/kea/kea-dhcp4.conf
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+
+- name: "Enable and start Kea services"
+  become: true
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - kea-dhcp4
+    - kea-ctrl-agent
+
